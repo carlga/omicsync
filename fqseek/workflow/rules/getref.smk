@@ -74,6 +74,8 @@ rule check_ref:
         ref = "{filename}"
     output:
         check = temp("{filename}_CHECKSUMS")
+    params:
+        ensembl_release = config['getref']['release']
     log: "logs/" + TIMESTAMP + "_{filename}_check_ref.log"
     threads: 1
     run:
@@ -83,16 +85,24 @@ rule check_ref:
             if input.ref in file:
                 link = os.path.join(os.path.dirname(file), "CHECKSUMS")
                 break
-        
+
         checksum_origin = subprocess.check_output(
             f"curl {link} --silent", 
             shell=True, 
             text=True
         )
-        checksum_origin = re.search(
-            r'(\d+\s+\d+)\s+' + input.ref, 
-            checksum_origin
-        ).group(1)
+        if params.ensembl_release > 112:
+            checksum_origin = re.search(
+                r'^(\d+\s+\d+)\s+.*\s' + re.escape(input.ref) + r'$',
+                checksum_origin,
+                re.MULTILINE
+            ).group(1)
+        else:
+            checksum_origin = re.search(
+                r'^(\d+\s+\d+)\s+' + re.escape(input.ref) + r'$',
+                checksum_origin,
+                re.MULTILINE
+            ).group(1)
 
         checksum_local = subprocess.check_output(
             f"sum {input.ref}", 
