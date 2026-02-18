@@ -61,11 +61,23 @@ rule download_fq:
         with open(input.tmp_link, "r") as f:
             link = f.readline().strip()
         
-        shell(" echo 'Downloading '{link}'...' > {log} ")
-        
-        shell(" curl {link} --remote-name --silent ")
-        
-        shell(" echo 'Finished downloading '{link}'' >> {log} ")
+        shell("""
+            echo 'Downloading {link}...' | tee -a {log}
+            
+            curl {link} \
+                --remote-name \
+                --silent \
+                --fail-early \
+                --retry 5 \
+                --retry-delay 10 \
+                --retry-connrefused \
+                --max-time 300 || {{
+                echo 'FAILED after 5 retries: {link}' | tee -a {log}
+                exit 1
+            }}
+            
+            echo 'Successfully downloaded {link}' | tee -a {log}
+        """)
 
 rule check_fq:
     """
