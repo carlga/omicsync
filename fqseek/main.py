@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import json
 import subprocess
 
 from .__init__ import __version__
@@ -332,14 +333,34 @@ def main():
     getfq_parser.add_argument(
         "ids",
         type=str,
-        nargs="+",
+        nargs="*",
         help="One or multiple accession IDs for file retrieval."
+    )
+    getfq_parser.add_argument(
+        "-i",
+        "--ids_file",
+        type=str,
+        required=False,
+        help=(
+            "Path to text file containing accession IDs (one per line). "
+            "Use this for large projects with many IDs instead of command-line input."
+        )
     )
     getfq_parser.add_argument(
         "--ftp",
         default=False,
         action='store_true',
         help="Limits metadata retrieval to FTP download links."
+    )
+    getfq_parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=1,
+        required=False,
+        help=(
+            "Number of accession IDs to process per ffq call. "
+            "Default=1 (all at once). Use >1 to split into batches."
+        )
     )
     getfq_parser.add_argument(
         "-o",
@@ -577,6 +598,22 @@ def main():
         help="Path to annotation file in gtf format."
     )
     run_rnaseq_parser.add_argument(
+        "-e",
+        "--exon_quant",
+        action='store_true',
+        default=None,
+        required=False,
+        help="Performs exon-level quantification with featureCounts."
+    )
+    run_rnaseq_parser.add_argument(
+        "-G",
+        "--genome",
+        default=None,
+        type=str,
+        required=False,
+        help="Path to FASTA-format file with reference sequences used in read mapping."
+    )
+    run_rnaseq_parser.add_argument(
         "-o",
         "--outdir",
         default=".",
@@ -794,7 +831,7 @@ def main():
         profile = config['init']['profile']
         cmd = (
             " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock "
+            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
             " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
         ).format(
             profile = f"--profile {profile}" if profile is not None else "",
@@ -847,7 +884,7 @@ def main():
         profile = config['getref']['profile']
         cmd = (
             " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock "
+            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
             " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
         ).format(
             profile = f"--profile {profile}" if profile is not None else "",
@@ -875,29 +912,73 @@ def main():
         update_configfile(args.configfile, config)
 
         # Initialize directory for download
-        json_path = (
-            "{outdir}/download_meta.json"
-        ).format(
-            outdir = config['getref']['outdir']
-        )
+        json_path = f"{config['getfq']['outdir']}/download_meta.json"
+        batch_size = config['getfq'].get('batch_size', 1)
         
         if os.path.exists(json_path):
-            logger.warning(f"File exists '{json_path}'! Overwriting...")
-        
-        cmd = (
-            " ffq {ids} {ftp} -o {outdir}/download_meta.json"
-        ).format(
-            ids = config['getfq']['ids'],
-            outdir = config['getfq']['outdir'],
-            ftp = '--ftp' if args.ftp else ''
-        )
-        subprocess.check_call(cmd, shell=True, stderr=subprocess.DEVNULL)
+            logger.warning(f"File exists '{json_path}'! Using...")
+        else:
+            ids_list = config['getfq']['ids'].split()
+            total_ids = len(ids_list)
+            ftp_flag = '--ftp' if config['getfq'].get('ftp', False) else ''
+            
+            logger.warning(f"Fetching metadata for {total_ids} accession(s)")
+            
+            if batch_size == 1:
+                # Single ffq call for all IDs
+                cmd = f"ffq {config['getfq']['ids']} {ftp_flag} -o {json_path}"
+                subprocess.check_call(
+                    f"""for i in {{1..5}}; do
+                        echo "Retrieving download links (attempt $i/5)"
+                        {cmd}
+                        sleep 5 && [[ -s {json_path} ]] && exit 0 || sleep 5
+                    done || (echo "ffq failed all retries" && exit 1)""",
+                    shell=True, stderr=subprocess.DEVNULL
+                )
+            else:
+                # Batch processing
+                all_metadata = []
+                num_batches = (total_ids + batch_size - 1) // batch_size
+                
+                for i in range(0, total_ids, batch_size):
+                    batch = ids_list[i:i+batch_size]
+                    batch_num = i // batch_size + 1
+                    temp_json = f"{config['getfq']['outdir']}/batch_{batch_num}_temp.json"
+                    
+                    logger.warning(f"Batch {batch_num}/{num_batches}: {len(batch)} ID(s)")
+                    cmd = f"ffq {' '.join(batch)} {ftp_flag} -o {temp_json}"
+                    
+                    try:
+                        subprocess.check_call(
+                            f"""for i in {{1..5}}; do
+                                echo "  Retrieving download links (attempt $i/5)"
+                                {cmd}
+                                sleep 5 && [[ -s {temp_json} ]] && exit 0 || sleep 5
+                            done || exit 1""",
+                            shell=True, stderr=subprocess.DEVNULL
+                        )
+                        
+                        with open(temp_json, 'r') as f:
+                            batch_data = json.load(f)
+                            all_metadata.extend(batch_data if isinstance(batch_data, list) else [batch_data])
+                        
+                        os.remove(temp_json)
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Batch {batch_num} failed: {e}")
+                        if os.path.exists(temp_json): os.remove(temp_json)
+                        for f in __import__('glob').glob(f"{config['getfq']['outdir']}/batch_*_temp.json"):
+                            os.remove(f)
+                        sys.exit(1)
+                
+                with open(json_path, 'w') as f:
+                    json.dump(all_metadata, f, indent=2)
+                logger.warning(f"Merged {num_batches} batches: {len(all_metadata)} entries")
 
         # Run getfq workflow
         profile = config['getfq']['profile']
         cmd = (
             " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock "
+            " --directory {directory} --configfile {configfile} --nolock --latency-wait 300 "
             " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
         ).format(
             profile = f"--profile {profile}" if profile is not None else "",
@@ -928,7 +1009,7 @@ def main():
         profile = config['runqc']['profile']
         cmd = (
             " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock "
+            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
             " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
         ).format(
             profile = f"--profile {profile}" if profile is not None else "",
@@ -959,7 +1040,7 @@ def main():
         profile = config['run_rnaseq']['profile']
         cmd = (
             " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock "
+            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
             " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
         ).format(
             profile = f"--profile {profile}" if profile is not None else "",
@@ -990,7 +1071,7 @@ def main():
         profile = config['run_atacseq']['profile']
         cmd = (
             " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock "
+            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
             " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
         ).format(
             profile = f"--profile {profile}" if profile is not None else "",

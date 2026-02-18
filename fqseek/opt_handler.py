@@ -279,41 +279,75 @@ def getref_config_check(config):
 def getfq_config_set(config, args):
     """ Sets parameters for getfq module. """
 
-    if config['getfq']['ids'] is None:
-        config['getfq']['ids'] = ' '.join(args.ids)
-    else:
-        logger.warning(
-            f"Accessions '{config['getfq']['ids']}' are set in configuration! Using..."
-        )
+    if 'getfq' not in config:
+        config['getfq'] = {}
+
+    # Mutually exclusive ID sources
+    has_cmdline = hasattr(args, 'ids') and args.ids
+    has_file = hasattr(args, 'ids_file') and args.ids_file
     
-    if config['getfq']['outdir'] is None:
-        config['getfq']['outdir'] = os.path.abspath(args.outdir)
-    else:
-        logger.warning(
-            f"Outdir '{config['getfq']['outdir']}' is set in configuration! Using..."
-        )
+    if has_cmdline and has_file:
+        logger.error("Cannot use both command-line IDs and --ids-file simultaneously")
+        sys.exit(1)
     
-    if config['getfq']['jobs'] is None:
-        config['getfq']['jobs'] = args.jobs
+    # Load IDs
+    all_ids = []
+    if has_file:
+        if not os.path.exists(args.ids_file):
+            logger.error(f"IDs file not found: {args.ids_file}")
+            sys.exit(1)
+        with open(args.ids_file, 'r') as f:
+            all_ids = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        logger.warning(f"Loaded {len(all_ids)} IDs from file")
+    elif has_cmdline:
+        all_ids = args.ids
     else:
-        logger.warning(
-            f"Job/core number '{config['getfq']['jobs']}' is set in configuration! Using..."
-        )
+        logger.error("No accession IDs provided (use command-line or --ids-file)")
+        sys.exit(1)
     
-    if config['getfq']['profile'] is None:
-        if args.profile:
-            config['getfq']['profile'] = os.path.abspath(args.profile)
-    else:
-        logger.warning(
-            f"Profile '{config['getfq']['profile']}' is set in configuration! Using..."
-        )
+    # Deduplicate
+    unique_ids = list(dict.fromkeys(all_ids))
+    if len(unique_ids) < len(all_ids):
+        logger.warning(f"Removed {len(all_ids) - len(unique_ids)} duplicates")
     
+    config['getfq']['ids'] = ' '.join(unique_ids)
+    logger.warning(f"Total IDs: {len(unique_ids)}")
+
+    # Other settings
+    if hasattr(args, 'ftp'): config['getfq']['ftp'] = args.ftp
+    if hasattr(args, 'batch_size'): 
+        config['getfq']['batch_size'] = args.batch_size
+        if args.batch_size > 1: logger.warning(f"Batch size: {args.batch_size}")
+    if hasattr(args, 'outdir') and args.outdir: config['getfq']['outdir'] = args.outdir
+    if hasattr(args, 'jobs') and args.jobs: config['getfq']['jobs'] = args.jobs
+    if hasattr(args, 'profile'): config['getfq']['profile'] = args.profile
+    if hasattr(args, 'dryrun'): config['getfq']['dryrun'] = args.dryrun
+
     return config
 
 
 def getfq_config_check(config):
     """ Evaluates input parameters for getfq module. """
 
+    if 'getfq' not in config:
+        logger.error("getfq configuration not found")
+        sys.exit(1)
+
+    if 'ids' not in config['getfq'] or not config['getfq']['ids']:
+        logger.error("No accession IDs provided")
+        sys.exit(1)
+
+    if 'outdir' in config['getfq']:
+        outdir = config['getfq']['outdir']
+        if not os.path.exists(outdir):
+            os.makedirs(outdir, exist_ok=True)
+            logger.warning(f"Created output directory: {outdir}")
+    
+    batch_size = config['getfq'].get('batch_size', 1)
+    if batch_size < 1:
+        logger.error(f"Invalid batch size: {batch_size}")
+        sys.exit(1)
+    
     # Profile
     if config['getfq']['profile']:
         if not os.path.exists(config['getfq']['profile']):
@@ -569,6 +603,24 @@ def run_rnaseq_config_set(config, args):
             f"Annotation file '{config['run_rnaseq']['gtf']}' "
             "is set in configuration! Using..."
         )
+
+    if config['run_rnaseq']['exon_quant'] is None:
+        if args.exon_quant:
+            config['run_rnaseq']['exon_quant'] = args.exon_quant
+    else:
+        logger.warning(
+            f"Exon-level quantification '{config['run_rnaseq']['exon_quant']}' "
+            "is set in configuration! Using..."
+        )
+
+    if config['run_rnaseq']['genome'] is None:
+        if args.genome:
+            config['run_rnaseq']['genome'] = os.path.abspath(args.genome)
+    else:
+        logger.warning(
+            f"Reference FASTA file '{config['run_rnaseq']['genome']}' "
+            "is set in configuration! Using..."
+        )
     
     if config['run_rnaseq']['outdir'] is None:
         config['run_rnaseq']['outdir'] = os.path.abspath(args.outdir)
@@ -676,6 +728,17 @@ def run_rnaseq_config_check(config):
     else:
         if not os.path.exists(config['run_rnaseq']['gtf']):
             logger.error(f"Annotation file '{config['run_rnaseq']['gtf']}' not found.")
+            sys.exit(1)
+    
+    # Exon-level quantification
+    if config['run_rnaseq']['exon_quant']:
+        if config['run_rnaseq']['genome']:
+            if not os.path.exists(config['run_rnaseq']['genome']):
+                logger.error(f"Reference FASTA file '{config['run_rnaseq']['genome']}' not found.")
+                sys.exit(1)
+    else:
+        if config['run_rnaseq']['genome']:
+            logger.error(f"Reference FASTA file '{config['run_rnaseq']['genome']}' should be provided with -e/--exon_quent flag for exon-level quantification.")
             sys.exit(1)
     
     # Profile

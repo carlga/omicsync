@@ -64,6 +64,11 @@ if config["run_rnaseq"]["kallisto_ref"]:
     except AttributeError:
         KALLISTO_FRAGMENT_LENGTH_SD = 30
 
+if config["run_rnaseq"]["exon_quant"]:
+    EXON_QUANT = True
+else:
+    EXON_QUANT = False
+
 # Set targets
 RUN_RULES = expand(
     ["fq_preprocessed/{name}_fastp.json",
@@ -92,6 +97,17 @@ if config["run_rnaseq"]["kallisto_ref"]:
     )
     RUN_RULES.append(RUN_RNASEQ_KALLISTO)
 
+if config["run_rnaseq"]["exon_quant"]:
+    RUN_RNASEQ_EXON_QUANT = [
+        "hisat2_aligned_featurecounts_exon_quant/flattened_gtf_merge.saf",
+        "hisat2_aligned_featurecounts_exon_quant/flattened_gtf_chop.saf",
+        "hisat2_aligned_featurecounts_exon_quant/" + PROJID + "_featurecounts_exon_merge.featureCounts",
+        "hisat2_aligned_featurecounts_exon_quant/" + PROJID + "_featurecounts_exon_chop.featureCounts",
+        "hisat2_aligned_featurecounts_exon_quant/" + PROJID + "_featurecounts_exon_merge.featureCounts.jcounts",
+        "hisat2_aligned_featurecounts_exon_quant/" + PROJID + "_featurecounts_exon_chop.featureCounts.jcounts"
+    ]
+
+    RUN_RULES.append(RUN_RNASEQ_EXON_QUANT)
 
 rule all:
     input:
@@ -142,6 +158,9 @@ if PAIRED:
                 shell(
                     '''
                     echo 'Removing aligned reads from '{wildcards.name}'...' >> {log}
+
+                    rm -rf {params.outdir}/sortmerna/{wildcards.name}*
+                    rm -f {params.outdir}/sortmerna/out/{wildcards.name}*
 
                     sortmerna \
                         --threads {threads} \
@@ -213,6 +232,9 @@ else:
                 shell(
                     '''
                     echo 'Removing aligned reads from '{wildcards.name}'...' >> {log}
+                    
+                    rm -rf {params.outdir}/sortmerna/{wildcards.name}*
+                    rm -f {params.outdir}/sortmerna/out/{wildcards.name}*
 
                     sortmerna \
                         --threads {threads} \
@@ -671,6 +693,126 @@ rule feature_counts:
             echo 'Finished gene expression quantification' >> {log}
             '''
         )
+
+if EXON_QUANT:
+    rule flatten_gtf:
+        """
+        Flatten GTF annotation for robust exon-level quantification.
+        """
+        input:
+            gtf = config['run_rnaseq']['gtf']
+        output:
+            saf_merge = "hisat2_aligned_featurecounts_exon_quant/flattened_gtf_merge.saf",
+            saf_chop = "hisat2_aligned_featurecounts_exon_quant/flattened_gtf_chop.saf"
+        params:
+            outdir = "hisat2_aligned_featurecounts_exon_quant"
+        log: "logs/" + TIMESTAMP + "_flatten_gtf.log"
+        threads: 1
+        # resources: cpus=10, mem_mb=20000, time_min=300
+        shell:
+            '''
+            echo 'Flattening GTF file...' > {log}
+
+            flattenGTF -a {input.gtf} -o {output.saf_merge} -t exon -g gene_id \
+                &>> {log}
+            
+            flattenGTF -a {input.gtf} -o {output.saf_chop} -t exon -g gene_id -C \
+                &>> {log}
+
+            echo 'Finished GTF file flattening' >> {log}
+            '''
+    
+    rule feature_counts_exon:
+        """
+        Exon-level quantification with featureCounts.
+        """
+        input:
+            bams = expand(["hisat2_aligned/{name}.bam"], name=NAMES),
+            saf_merge = "hisat2_aligned_featurecounts_exon_quant/flattened_gtf_merge.saf",
+            saf_chop = "hisat2_aligned_featurecounts_exon_quant/flattened_gtf_chop.saf",
+            genome = config['run_rnaseq']['genome']
+        output:
+            featurecounts_merge = "hisat2_aligned_featurecounts_exon_quant/" + PROJID + "_featurecounts_exon_merge.featureCounts",
+            featurecounts_chop = "hisat2_aligned_featurecounts_exon_quant/" + PROJID + "_featurecounts_exon_chop.featureCounts",
+            featurecounts_merge_jcounts = "hisat2_aligned_featurecounts_exon_quant/" + PROJID + "_featurecounts_exon_merge.featureCounts.jcounts",
+            featurecounts_chop_jcounts = "hisat2_aligned_featurecounts_exon_quant/" + PROJID + "_featurecounts_exon_chop.featureCounts.jcounts"
+        params:
+            outdir = "hisat2_aligned_featurecounts_exon_quant"
+        log: "logs/" + TIMESTAMP + "_feature_counts_exon.log"
+        threads: AVAIL_THREADS
+        run:
+            pe = '-p --countReadPairs -C -B' if PAIRED else ''
+            featurecounts_strandedness = '-s 0'
+            if STRANDED in ['F','FR']:
+                featurecounts_strandedness = '-s 1'
+            elif STRANDED in ['R','RF']:
+                featurecounts_strandedness = '-s 2'
+            g = '-G ' + input.genome if input.genome else ''
+            shell(
+                '''
+                echo 'Quantifying exon expression with flattened GTF...' > {log}
+                
+                featureCounts \
+                    -T {threads} \
+                    {pe} \
+                    {featurecounts_strandedness} \
+                    -F SAF \
+                    -g GeneID \
+                    -f \
+                    -O \
+                    -a {input.saf_merge} \
+                    -o {output.featurecounts_merge} \
+                    --nonSplitOnly \
+                    {input.bams} \
+                    &>> {log}
+                
+                featureCounts \
+                    -T {threads} \
+                    {pe} \
+                    {featurecounts_strandedness} \
+                    -F SAF \
+                    -g GeneID \
+                    -f \
+                    -O \
+                    -a {input.saf_chop} \
+                    -o {output.featurecounts_chop} \
+                    --nonSplitOnly \
+                    {input.bams} \
+                    &>> {log}
+                
+                featureCounts \
+                    -T {threads} \
+                    {pe} \
+                    {featurecounts_strandedness} \
+                    -F SAF \
+                    -g GeneID \
+                    -f \
+                    -O \
+                    -a {input.saf_merge} \
+                    -o {output.featurecounts_merge} \
+                    -J \
+                    {g} \
+                    {input.bams} \
+                    &>> {log}
+                
+                featureCounts \
+                    -T {threads} \
+                    {pe} \
+                    {featurecounts_strandedness} \
+                    -F SAF \
+                    -g GeneID \
+                    -f \
+                    -O \
+                    -a {input.saf_chop} \
+                    -o {output.featurecounts_chop} \
+                    -J \
+                    {g} \
+                    {input.bams} \
+                    &>> {log}
+                
+                echo 'Finished exon-level expression quantification' >> {log}
+                '''
+            )
 
 rule make_bedgraph:
     """

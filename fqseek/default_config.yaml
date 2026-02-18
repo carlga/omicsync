@@ -52,6 +52,8 @@ getref:
 # -------------------
 getfq:
   ids:
+  ids_file:
+  batch_size:
   outdir:
   jobs:
   profile:
@@ -85,6 +87,8 @@ run_rnaseq:
   kallisto_ref:
   kallisto_opt:
   gtf:
+  exon_quant:
+  genome:
   outdir:
   jobs:
   profile:
