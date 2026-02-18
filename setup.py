@@ -1,11 +1,11 @@
 from setuptools import setup
-from fqseek.__init__ import __version__, __author__, __email__
+from osync.__init__ import __version__, __author__, __email__
 
 with open("README.md", "r") as f:
     long_description = f.read()
 
 setup(
-    name="fqseek",
+    name="osync",
     version=__version__,
     license="MIT",
     license_file = "LICENSE",
@@ -14,21 +14,21 @@ setup(
     maintainer=__author__,
     maintainer_email=__email__,
     description=(
-        "fqseek: an integrated framework for reproducible and efficient processing "
+        "osync: an integrated framework for reproducible and efficient processing "
         "of high-throughput sequencing data."
     ),
     long_description=long_description,
     long_description_content_type="text/markdown",
-    packages=["fqseek", "fqseek.workflow.rules", "fqseek.workflow.utils"],
-    package_data={"fqseek" : ["workflow/*/*"]},
+    packages=["osync", "osync.workflow.rules", "osync.workflow.utils"],
+    package_data={"osync" : ["workflow/*/*"]},
     include_package_data=True,
     zip_safe=False,
     python_requires=">=3.6",
     install_requires=[],
-    url="https://github.com/carlga/fqseek",
-    keywords=["fqseek", "NGS", "high-throughput sequencing", "QC", "fastq"],
+    url="https://github.com/carlga/osync",
+    keywords=["osync", "multi-omics", "data-driven discovery", "data integration"],
     entry_points={
-        "console_scripts": ["fqseek=fqseek.main:main"],
+        "console_scripts": ["osync=osync.main:main"],
     },
     classifiers=[
         "Environment :: Console",

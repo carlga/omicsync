@@ -1,4 +1,4 @@
-name: fqseek 
+name: osync 
 channels:
   - conda-forge
   - bioconda

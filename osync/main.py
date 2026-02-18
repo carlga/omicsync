@@ -35,8 +35,8 @@ def main():
     #
     parser = argparse.ArgumentParser(
         description=(
-            f"fqseek v{__version__}: an integrated framework for reproducible "
-            "and efficient processing of high-throughput sequencing data."
+            f"osync v{__version__}: A versatile toolkit efficient processing "
+            "and integration of omics data."
         ),
         add_help=False
     )
@@ -65,7 +65,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     # makeconfig subparser
-    makeconfig_msg = "Makes configuration file for fqseek execution."
+    makeconfig_msg = "Makes configuration file for osync execution."
     makeconfig_parser = subparsers.add_parser(
         "makeconfig", 
         parents=[parent], 
@@ -788,12 +788,12 @@ def main():
     if len(sys.argv) == 1 or (len(sys.argv) == 2 and args.help):
         parser.print_help(sys.stderr)
         sys.exit(0)
-    
+
     # Version return
     if args.version:
-        print(f"fqseek v{__version__}")
+        print(f"osync v{__version__}")
         sys.exit(0)
-    
+
     # Display subparser specific help messages when only subparser command is specified
     subparser_cmd_dict = {
         "makeconfig" : makeconfig_parser,
@@ -813,14 +813,14 @@ def main():
 
     if args.command == "makeconfig":
         make_configfile(args.output)
-    
+
 
     if args.command == "clearconfig":
         clear_configfile(args.configfile, args.which)
-    
+
 
     if args.command == "init":
-        
+
         # Check inputs and update configuration
         config = load_configfile(args.configfile)
         config = init_config_set(config, args)
@@ -848,10 +848,10 @@ def main():
         except subprocess.CalledProcessError as e:
             logger.error(e)
             sys.exit(1)
-        
+
 
     if args.command == "getref":
-        
+
         # Check inputs and update configuration
         config = load_configfile(args.configfile)
         config = getref_config_set(config, args)
@@ -904,7 +904,7 @@ def main():
 
 
     if args.command == "getfq":
-        
+
         # Check inputs and update configuration
         config = load_configfile(args.configfile)
         config = getfq_config_set(config, args)
@@ -914,16 +914,16 @@ def main():
         # Initialize directory for download
         json_path = f"{config['getfq']['outdir']}/download_meta.json"
         batch_size = config['getfq'].get('batch_size', 1)
-        
+
         if os.path.exists(json_path):
             logger.warning(f"File exists '{json_path}'! Using...")
         else:
             ids_list = config['getfq']['ids'].split()
             total_ids = len(ids_list)
             ftp_flag = '--ftp' if config['getfq'].get('ftp', False) else ''
-            
+
             logger.warning(f"Fetching metadata for {total_ids} accession(s)")
-            
+
             if batch_size == 1:
                 # Single ffq call for all IDs
                 cmd = f"ffq {config['getfq']['ids']} {ftp_flag} -o {json_path}"
@@ -939,15 +939,15 @@ def main():
                 # Batch processing
                 all_metadata = []
                 num_batches = (total_ids + batch_size - 1) // batch_size
-                
+
                 for i in range(0, total_ids, batch_size):
                     batch = ids_list[i:i+batch_size]
                     batch_num = i // batch_size + 1
                     temp_json = f"{config['getfq']['outdir']}/batch_{batch_num}_temp.json"
-                    
+
                     logger.warning(f"Batch {batch_num}/{num_batches}: {len(batch)} ID(s)")
                     cmd = f"ffq {' '.join(batch)} {ftp_flag} -o {temp_json}"
-                    
+
                     try:
                         subprocess.check_call(
                             f"""for i in {{1..5}}; do
@@ -957,11 +957,11 @@ def main():
                             done || exit 1""",
                             shell=True, stderr=subprocess.DEVNULL
                         )
-                        
+
                         with open(temp_json, 'r') as f:
                             batch_data = json.load(f)
                             all_metadata.extend(batch_data if isinstance(batch_data, list) else [batch_data])
-                        
+
                         os.remove(temp_json)
                     except subprocess.CalledProcessError as e:
                         logger.error(f"Batch {batch_num} failed: {e}")
@@ -969,7 +969,7 @@ def main():
                         for f in __import__('glob').glob(f"{config['getfq']['outdir']}/batch_*_temp.json"):
                             os.remove(f)
                         sys.exit(1)
-                
+
                 with open(json_path, 'w') as f:
                     json.dump(all_metadata, f, indent=2)
                 logger.warning(f"Merged {num_batches} batches: {len(all_metadata)} entries")
@@ -998,7 +998,7 @@ def main():
 
 
     if args.command == "runqc":
-        
+
         # Check inputs and update configuration
         config = load_configfile(args.configfile)
         config = runqc_config_set(config, args)
@@ -1026,10 +1026,10 @@ def main():
         except subprocess.CalledProcessError as e:
             logger.error(e)
             sys.exit(1)
-    
+
 
     if args.command == "run_rnaseq":
-        
+
         # Check inputs and update configuration
         config = load_configfile(args.configfile)
         config = run_rnaseq_config_set(config, args)
@@ -1060,7 +1060,7 @@ def main():
 
 
     if args.command == "run_atacseq":
-        
+
         # Check inputs and update configuration
         config = load_configfile(args.configfile)
         config = run_atacseq_config_set(config, args)
