@@ -1,20 +1,22 @@
+"""Command-line interface for osync.
+
+This module provides the main entry point for the osync toolkit, including
+argument parsing, configuration management, and workflow execution for all
+supported modules.
+"""
+
 import argparse
-import os
 import sys
-import json
-import subprocess
+from pathlib import Path
 
 from .__init__ import __version__
-
 from .logger import logger
-
 from .config_handler import (
-    make_configfile, 
-    load_configfile, 
-    update_configfile, 
+    make_configfile,
+    load_configfile,
+    update_configfile,
     clear_configfile
 )
-
 from .opt_handler import (
     init_config_set, init_config_check,
     getref_config_set, getref_config_check,
@@ -23,765 +25,431 @@ from .opt_handler import (
     run_rnaseq_config_set, run_rnaseq_config_check,
     run_atacseq_config_set, run_atacseq_config_check
 )
+from .workflow.utils.utils import (
+    execute_workflow,
+    handle_getref_workflow,
+    handle_getfq_workflow
+)
 
 
-def main():
+# Module registry - centralizes module configuration
+MODULES = {
+    'init': {
+        'config_set': init_config_set,
+        'config_check': init_config_check,
+        'snakefile': 'init.smk',
+        'description': 'Initializes resources for filtering, alignment processing and kraken2 analysis.'
+    },
+    'getref': {
+        'config_set': getref_config_set,
+        'config_check': getref_config_check,
+        'snakefile': 'getref.smk',
+        'description': 'Retrieves reference sequences and annotations for species.'
+    },
+    'getfq': {
+        'config_set': getfq_config_set,
+        'config_check': getfq_config_check,
+        'snakefile': 'getfq.smk',
+        'description': 'Retrieves fastq files from a sequence repository.'
+    },
+    'runqc': {
+        'config_set': runqc_config_set,
+        'config_check': runqc_config_check,
+        'snakefile': 'runqc.smk',
+        'description': 'Executes quality control module.'
+    },
+    'run_rnaseq': {
+        'config_set': run_rnaseq_config_set,
+        'config_check': run_rnaseq_config_check,
+        'snakefile': 'run_rnaseq.smk',
+        'description': 'Executes RNA-seq module.'
+    },
+    'run_atacseq': {
+        'config_set': run_atacseq_config_set,
+        'config_check': run_atacseq_config_check,
+        'snakefile': 'run_atacseq.smk',
+        'description': 'Executes ATAC-seq module.'
+    }
+}
+
+
+def add_common_args(parser: argparse.ArgumentParser) -> None:
+    """Add common arguments to a parser.
+
+    Args:
+        parser: ArgumentParser to add arguments to
     """
-    Entry point for command-line interface and argument parsers. 
-    """
+    parser.add_argument(
+        "-o", "--outdir",
+        default=".",
+        type=str,
+        help="Output directory for files (default is current directory)."
+    )
+    parser.add_argument(
+        "-j", "--jobs",
+        default=1,
+        type=int,
+        help="Maximum number of jobs/cores to use in parallel (default=1)."
+    )
+    parser.add_argument(
+        "-c", "--configfile",
+        type=str,
+        help="Sets path to configuration file."
+    )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        help="Sets path to snakemake profile (useful for cluster execution)."
+    )
+    parser.add_argument(
+        "--latency_wait",
+        default=1,
+        type=int,
+        help="Snakemake latency wait time in seconds (default=1)."
+    )
+    parser.add_argument(
+        "--dryrun",
+        action='store_true',
+        default=None,
+        help="Performs a dry run without execution."
+    )
 
-    #
-    # Main parser
-    #
+
+def create_argument_parser() -> argparse.ArgumentParser:
+    """Create and configure the main argument parser.
+
+    Returns:
+        Configured ArgumentParser instance
+    """
     parser = argparse.ArgumentParser(
         description=(
-            f"osync v{__version__}: A versatile toolkit efficient processing "
+            f"osync v{__version__}: A versatile toolkit for efficient processing "
             "and integration of omics data."
         ),
         add_help=False
     )
 
-    # Fix for parsing error
+    parser.add_argument("-v", "--version", action="store_true", help="Prints version.")
+    parser.add_argument("-h", "--help", action="store_true", help="Prints help message.")
+
+    return parser
+
+
+def setup_subparsers(parser: argparse.ArgumentParser) -> dict:
+    """Set up all subparsers for osync commands.
+
+    Args:
+        parser: Main ArgumentParser instance
+
+    Returns:
+        Dictionary mapping command names to their parsers
+    """
     parent = argparse.ArgumentParser(add_help=False)
-
-    # Add version
-    parser.add_argument(
-        "-v", 
-        "--version", 
-        action="store_true", 
-        help="Prints version."
-    )
-    # Add help
-    parser.add_argument(
-        "-h", 
-        "--help", 
-        action="store_true", 
-        help="Prints help message."
-    )
-
-    #
-    # Subparsers
-    #
     subparsers = parser.add_subparsers(dest="command")
+    parsers = {}
 
     # makeconfig subparser
-    makeconfig_msg = "Makes configuration file for osync execution."
-    makeconfig_parser = subparsers.add_parser(
-        "makeconfig", 
-        parents=[parent], 
-        description=makeconfig_msg, 
-        help=makeconfig_msg, 
-        add_help=True
+    msg = "Makes configuration file for osync execution."
+    parsers['makeconfig'] = subparsers.add_parser(
+        "makeconfig", parents=[parent], description=msg, help=msg, add_help=True
     )
-
-    makeconfig_parser.add_argument(
-        "-o",
-        "--output",
-        type=str,
-        default="config.yaml",
-        required=False,
+    parsers['makeconfig'].add_argument(
+        "-o", "--output", type=str, default="config.yaml",
         help="Indicates output file for configuration (default='./config.yaml')."
     )
 
-
     # clearconfig subparser
-    clearconfig_msg = "Empties parameters set in the configuration file."
-    clearconfig_parser = subparsers.add_parser(
-        "clearconfig", 
-        parents=[parent], 
-        description=clearconfig_msg, 
-        help=clearconfig_msg, 
-        add_help=True
+    msg = "Empties parameters set in the configuration file."
+    parsers['clearconfig'] = subparsers.add_parser(
+        "clearconfig", parents=[parent], description=msg, help=msg, add_help=True
     )
-
-    clearconfig_parser.add_argument(
-        "-w",
-        "--which",
-        type=str,
-        required=False,
+    parsers['clearconfig'].add_argument(
+        "-w", "--which", type=str,
         help=(
             "Indicates which module to clear in the configuration file. "
-            "Available options are: init, getref, getfq, runqc, run_rnaseq, "
-            "run_atacseq, all."
+            "Available options: init, getref, getfq, runqc, run_rnaseq, run_atacseq, all."
         )
     )
-    clearconfig_parser.add_argument(
-        "-c",
-        "--configfile",
-        type=str,
-        required=False,
-        help="Sets path to configuration file."
+    parsers['clearconfig'].add_argument(
+        "-c", "--configfile", type=str, help="Sets path to configuration file."
     )
-
 
     # init subparser
-    init_msg = "Initializes resources for filtering, alignment processing and kraken2 analysis."
-    init_parser = subparsers.add_parser(
-        "init", 
-        parents=[parent], 
-        description=init_msg, 
-        help=init_msg, 
-        add_help=True
+    parsers['init'] = subparsers.add_parser(
+        "init", parents=[parent], 
+        description=MODULES['init']['description'],
+        help=MODULES['init']['description'],
+        add_help=True,
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
-
-    init_parser.add_argument(
-        "--hisat2_ref",
-        type=str,
-        required=False,
+    parsers['init'].add_argument(
+        "--hisat2_ref", type=str, 
         help="Path to reference sequence file for HISAT2 index."
     )
-    init_parser.add_argument(
-        "--hisat2_index_base",
-        type=str,
-        required=False,
+    parsers['init'].add_argument(
+        "--hisat2_index_base", type=str, 
         help="Basename to use for HISAT2 index files."
     )
-    init_parser.add_argument(
-        "--hisat2_gtf",
-        type=str,
-        required=False,
+    parsers['init'].add_argument(
+        "--hisat2_gtf", type=str,
         help=(
-            "Path to reference annotation file. This includes exon and splice site "
-            "information for RNA-seq analysis. Requires ~160Gb RAM for human genome."
+            "Path to reference annotation file. Includes exon and splice site information "
+            "for RNA-seq analysis. Requires ~160Gb RAM for human genome."
         )
     )
-    init_parser.add_argument(
-        "--rrna_ref",
-        action='store_true',
-        default=None,
-        required=False,
+    parsers['init'].add_argument(
+        "--rrna_ref", action='store_true', default=None, 
         help="Downloads rRNA reference files to output directory."
     )
-    init_parser.add_argument(
-        "--exclusion_lists",
-        action='store_true',
-        default=None,
-        required=False,
+    parsers['init'].add_argument(
+        "--exclusion_lists", action='store_true', default=None, 
         help="Downloads exclusion list files to output directory."
     )
-    init_parser.add_argument(
-        "--chr_sizes_ref",
-        type=str,
-        required=False,
+    parsers['init'].add_argument(
+        "--chr_sizes_ref", type=str, 
         help="Path to reference sequence file for retrieving chromosome sizes."
     )
-    init_parser.add_argument(
-        "--kallisto_ref",
-        type=str,
-        required=False,
+    parsers['init'].add_argument(
+        "--kallisto_ref", type=str, 
         help="Path to reference sequence file for kallisto index."
     )
-    init_parser.add_argument(
-        "--kallisto_index",
-        type=str,
-        required=False,
+    parsers['init'].add_argument(
+        "--kallisto_index", type=str, 
         help="Filename for kallisto index."
     )
-    init_parser.add_argument(
-        "--kraken2_db_type",
-        type=str,
-        required=False,
+    parsers['init'].add_argument(
+        "--kraken2_db_type", type=str,
+        metavar='DB_TYPE',
         help=(
-            "Type of kraken2 database to build. Choose from: 'standard', 'greengenes', "
-            "'rdp', 'silva', 'nt', 'std16_prebuilt' and 'plusPFP16_prebuilt'. Make sure "
-            "enough RAM and disk space are available for 'standard' and 'nt' build. Additional "
-            "prebuilt databases available at https://benlangmead.github.io/aws-indexes/k2."
+            "Type of Kraken2 database. "
+            "PRE-BUILT REFSEQ (Oct 2025, includes Bracken 50/75/100/150/200/250/300-mers): "
+            "viral (0.6GB), minusb (11GB), standard (94GB), standard_8 (7.5GB), "
+            "standard_16 (14.9GB), pluspf (100.6GB), pluspf_8 (7.5GB), pluspf_16 (14.9GB), "
+            "pluspfp (214.5GB), pluspfp_8 (7.5GB), pluspfp_16 (14.9GB), pracken (351.6GB), "
+            "eupathdb48 (11GB), core_nt (316.2GB), gtdb_v226 (644GB). "
+            "PRE-BUILT 16S (Mar 2020, includes Bracken 100/150/200-mers): "
+            "16s_greengenes_13.5 (73MB), 16s_rdp_11.5 (168MB), "
+            "16s_silva_132 (117MB), 16s_silva_138 (112MB). "
+            "CUSTOM BUILDS (requires --bracken_read_len): standard_custom, greengenes, rdp, silva, nt_custom. "
+            "Capped DBs (-8/-16) trade accuracy for reduced memory. "
+            "Credit: https://benlangmead.github.io/aws-indexes/k2"
         )
     )
-    init_parser.add_argument(
-        "--bracken_read_len",
-        default=100,
-        type=int,
-        required=False,
-        help="Read length for classifications (default=100)."
+    parsers['init'].add_argument(
+        "--bracken_read_len", default=100, type=int, 
+        help="Read length for Bracken custom builds (default=100)."
     )
-    init_parser.add_argument(
-        "-o",
-        "--outdir",
-        default=".",
-        type=str,
-        required=False,
-        help="Output directory for files (default is current directory)."
-    )
-    init_parser.add_argument(
-        "-j",
-        "--jobs",
-        default=1,
-        type=int,
-        required=False,
-        help="Maximum number of jobs/cores to use in parallel (default=1)."
-    )
-    init_parser.add_argument(
-        "-c",
-        "--configfile",
-        type=str,
-        required=False,
-        help="Sets path to configuration file."
-    )
-    init_parser.add_argument(
-        "-p",
-        "--profile",
-        type=str,
-        required=False,
-        help="Sets path to snakemake profile (useful for cluster execution)."
-    )
-    init_parser.add_argument(
-        "-z",
-        "--dryrun",
-        action='store_true',
-        default=None,
-        required=False,
-        help="Performs a dry run without execution."
-    )
-
+    add_common_args(parsers['init'])
 
     # getref subparser
-    getref_msg = "Retrieves reference sequences and annotations for species."
-    getref_parser = subparsers.add_parser(
-        "getref", 
-        parents=[parent], 
-        description=getref_msg, 
-        help=getref_msg, 
+    parsers['getref'] = subparsers.add_parser(
+        "getref", parents=[parent],
+        description=MODULES['getref']['description'],
+        help=MODULES['getref']['description'],
         add_help=True
     )
-
-    getref_parser.add_argument(
-        "-s",
-        "--species",
-        type=str,
-        default=None,
-        required=False,
+    parsers['getref'].add_argument(
+        "-s", "--species", type=str, 
         help="Indicates species for file retrieval (display available with `--list_sp`)."
     )
-    getref_parser.add_argument(
-        "-l",
-        "--list_sp",
-        action="store_true",
-        default=False,
-        required=False,
+    parsers['getref'].add_argument(
+        "-l", "--list_sp", action="store_true", default=False, 
         help="Lists available species from Ensembl (specify release with `--release`)."
     )
-    getref_parser.add_argument(
-        "-w",
-        "--which",
-        type=str,
-        default="dna,gtf",
-        required=False,
-        help=(
-            "Files to fetch with `gget` (default='dna,gtf'). Available "
-            "options are: gtf, dna, cdna, ncrna, cds, pep, all."
-        )
+    parsers['getref'].add_argument(
+        "-w", "--which", type=str, default="dna,gtf", 
+        help="Files to fetch with `gget` (default='dna,gtf'). Options: gtf, dna, cdna, ncrna, cds, pep, all."
     )
-    getref_parser.add_argument(
-        "-r",
-        "--release",
-        default=None,
-        type=int,
-        required=False,
+    parsers['getref'].add_argument(
+        "-r", "--release", default=None, type=int, 
         help="Ensembl release to retrieve from (default=latest)."
     )
-    getref_parser.add_argument(
-        "-o",
-        "--outdir",
-        default=".",
-        type=str,
-        required=False,
-        help="Output directory for files (default is current directory)."
-    )
-    getref_parser.add_argument(
-        "-j",
-        "--jobs",
-        default=1,
-        type=int,
-        required=False,
-        help="Maximum number of jobs/cores to use in parallel (default=1)."
-    )
-    getref_parser.add_argument(
-        "-c",
-        "--configfile",
-        type=str,
-        required=False,
-        help="Sets path to configuration file."
-    )
-    getref_parser.add_argument(
-        "-p",
-        "--profile",
-        type=str,
-        required=False,
-        help="Sets path to snakemake profile (useful for cluster execution)."
-    )
-    getref_parser.add_argument(
-        "-z",
-        "--dryrun",
-        action='store_true',
-        default=None,
-        required=False,
-        help="Performs a dry run without execution."
-    )
-
+    add_common_args(parsers['getref'])
 
     # getfq subparser
-    getfq_msg = "Retrieves fastq files from a sequence respository."
-    getfq_parser = subparsers.add_parser(
-        "getfq", 
-        parents=[parent], 
-        description=getfq_msg, 
-        help=getfq_msg, 
+    parsers['getfq'] = subparsers.add_parser(
+        "getfq", parents=[parent],
+        description=MODULES['getfq']['description'],
+        help=MODULES['getfq']['description'],
         add_help=True
     )
-
-    getfq_parser.add_argument(
-        "ids",
-        type=str,
-        nargs="*",
+    parsers['getfq'].add_argument(
+        "ids", type=str, nargs="*", 
         help="One or multiple accession IDs for file retrieval."
     )
-    getfq_parser.add_argument(
-        "-i",
-        "--ids_file",
-        type=str,
-        required=False,
-        help=(
-            "Path to text file containing accession IDs (one per line). "
-            "Use this for large projects with many IDs instead of command-line input."
-        )
+    parsers['getfq'].add_argument(
+        "-i", "--ids_file", type=str, 
+        help="Path to text file containing accession IDs (one per line). Use for large projects."
     )
-    getfq_parser.add_argument(
-        "--ftp",
-        default=False,
-        action='store_true',
+    parsers['getfq'].add_argument(
+        "--ftp", default=False, action='store_true', 
         help="Limits metadata retrieval to FTP download links."
     )
-    getfq_parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=1,
-        required=False,
-        help=(
-            "Number of accession IDs to process per ffq call. "
-            "Default=1 (all at once). Use >1 to split into batches."
-        )
+    parsers['getfq'].add_argument(
+        "--batch_size", type=int, default=1, 
+        help="Number of accession IDs to process per ffq call. Default=1 (all at once). Use >1 to split into batches."
     )
-    getfq_parser.add_argument(
-        "-o",
-        "--outdir",
-        default=".",
-        type=str,
-        required=False,
-        help="Output directory for files (default is current directory)."
-    )
-    getfq_parser.add_argument(
-        "-j",
-        "--jobs",
-        default=1,
-        type=int,
-        required=False,
-        help="Maximum number of jobs/cores to use in parallel (default=1)."
-    )
-    getfq_parser.add_argument(
-        "-c",
-        "--configfile",
-        type=str,
-        required=False,
-        help="Sets path to configuration file."
-    )
-    getfq_parser.add_argument(
-        "-p",
-        "--profile",
-        type=str,
-        required=False,
-        help="Sets path to snakemake profile (useful for cluster execution)."
-    )
-    getfq_parser.add_argument(
-        "-z",
-        "--dryrun",
-        action='store_true',
-        default=None,
-        required=False,
-        help="Performs a dry run without execution."
-    )
-
+    add_common_args(parsers['getfq'])
 
     # runqc subparser
-    runqc_msg = "Executes quality control module."
-    runqc_parser = subparsers.add_parser(
-        "runqc", 
-        parents=[parent], 
-        description=runqc_msg, 
-        help=runqc_msg, 
+    parsers['runqc'] = subparsers.add_parser(
+        "runqc", parents=[parent],
+        description=MODULES['runqc']['description'],
+        help=MODULES['runqc']['description'],
         add_help=True
     )
-
-    runqc_parser.add_argument(
-        "-i",
-        "--indir",
-        type=str,
-        required=False,
+    parsers['runqc'].add_argument(
+        "-i", "--indir", type=str, 
         help="Input directory containing fastq files."
     )
-    runqc_parser.add_argument(
-        "-n",
-        "--number",
-        default=200000,
-        type=float,
-        required=False,
-        help=(
-            "Specifies random sampling of fastq files. Can be a fraction of reads (0-1), "
-            "all reads (1) or a specific number of reads (>1) (default=200000)."
-        )
+    parsers['runqc'].add_argument(
+        "-n", "--number", default=200000, type=float, 
+        help="Random sampling of fastq files. Can be a fraction (0-1), all reads (1), or specific number (>1) (default=200000)."
     )
-    runqc_parser.add_argument(
-        "-s",
-        "--seed",
-        default=23,
-        type=int,
-        required=False,
-        help="Specifies random seed used for sampling (default=23)."
+    parsers['runqc'].add_argument(
+        "-s", "--seed", default=23, type=int, 
+        help="Random seed for sampling (default=23)."
     )
-    runqc_parser.add_argument(
-        "-f",
-        "--fastp_opt",
-        default="",
-        type=str,
-        required=False,
-        help=(
-            "Additional options for fastq file processing with fastp. Do not include "
-            "arguments for input and output files (-i, -o, -I, -O, -j, -h)."
-        )
+    parsers['runqc'].add_argument(
+        "-f", "--fastp_opt", default="", type=str, 
+        help="Additional fastp options. Do not include -i, -o, -I, -O, -j, -h."
     )
-    runqc_parser.add_argument(
-        "-x",
-        "--hisat2_ref",
-        default=None,
-        type=str,
-        required=False,
+    parsers['runqc'].add_argument(
+        "-x", "--hisat2_ref", default=None, type=str, 
         help="Path and basename of HISAT2 index files."
     )
-    runqc_parser.add_argument(
-        "-g",
-        "--gtf",
-        default=None,
-        type=str,
-        required=False,
+    parsers['runqc'].add_argument(
+        "-g", "--gtf", default=None, type=str, 
         help="Path to annotation file in gtf format."
     )
-    runqc_parser.add_argument(
-        "-k",
-        "--kraken2_db",
-        default=None,
-        type=str,
-        required=False,
-        help="Directory containing database for kraken2 analysis."
+    parsers['runqc'].add_argument(
+        "-k", "--kraken2_db", default=None, type=str, 
+        help="Directory containing kraken2 database."
     )
-    runqc_parser.add_argument(
-        "-o",
-        "--outdir",
-        default=".",
-        type=str,
-        required=False,
-        help="Output directory for files (default is current directory)."
-    )
-    runqc_parser.add_argument(
-        "-j",
-        "--jobs",
-        default=1,
-        type=int,
-        required=False,
-        help="Maximum number of jobs/cores to use in parallel (default=1)."
-    )
-    runqc_parser.add_argument(
-        "-c",
-        "--configfile",
-        type=str,
-        required=False,
-        help="Sets path to configuration file."
-    )
-    runqc_parser.add_argument(
-        "-p",
-        "--profile",
-        type=str,
-        required=False,
-        help="Sets path to snakemake profile (useful for cluster execution)."
-    )
-    runqc_parser.add_argument(
-        "-z",
-        "--dryrun",
-        action='store_true',
-        default=None,
-        required=False,
-        help="Performs a dry run without execution."
-    )
+    add_common_args(parsers['runqc'])
 
     # run_rnaseq subparser
-    run_rnaseq_msg = "Executes RNA-seq module."
-    run_rnaseq_parser = subparsers.add_parser(
-        "run_rnaseq", 
-        parents=[parent], 
-        description=run_rnaseq_msg, 
-        help=run_rnaseq_msg, 
+    parsers['run_rnaseq'] = subparsers.add_parser(
+        "run_rnaseq", parents=[parent],
+        description=MODULES['run_rnaseq']['description'],
+        help=MODULES['run_rnaseq']['description'],
         add_help=True
     )
-
-    run_rnaseq_parser.add_argument(
-        "-i",
-        "--indir",
-        type=str,
-        required=False,
+    parsers['run_rnaseq'].add_argument(
+        "-i", "--indir", type=str, 
         help="Input directory containing fastq files."
     )
-    run_rnaseq_parser.add_argument(
-        "-f",
-        "--fastp_opt",
-        default="",
-        type=str,
-        required=False,
-        help=(
-            "Additional options for fastq file processing with fastp. Do not include "
-            "arguments: -i, -o, -I, -O, -j, -h."
-        )
+    parsers['run_rnaseq'].add_argument(
+        "-f", "--fastp_opt", default="", type=str, 
+        help="Additional fastp options. Do not include -i, -o, -I, -O, -j, -h."
     )
-    run_rnaseq_parser.add_argument(
-        "-r",
-        "--removal_ref",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_rnaseq'].add_argument(
+        "-r", "--removal_ref", default=None, type=str, 
         help="Path to reference file for read removal."
     )
-    run_rnaseq_parser.add_argument(
-        "-x",
-        "--hisat2_ref",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_rnaseq'].add_argument(
+        "-x", "--hisat2_ref", default=None, type=str, 
         help="Path and basename of HISAT2 index files."
     )
-    run_rnaseq_parser.add_argument(
-        "-a",
-        "--hisat2_opt",
-        default="",
-        type=str,
-        required=False,
-        help=(
-            "Additional options for read alignment with HISAT2. Do not include "
-            "arguments: -x, -1, -2, -U, -S, --summary-file. Provide strandness with "
-            "--rna-strandness (default=unstranded)."
-        )
+    parsers['run_rnaseq'].add_argument(
+        "-a", "--hisat2_opt", default="", type=str, 
+        help="Additional HISAT2 options. Do not include -x, -1, -2, -U, -S, --summary-file. Provide strandness with --rna-strandness (default=unstranded)."
     )
-    run_rnaseq_parser.add_argument(
-        "-t",
-        "--kallisto_ref",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_rnaseq'].add_argument(
+        "-t", "--kallisto_ref", default=None, type=str, 
         help="Filename of kallisto index file."
     )
-    run_rnaseq_parser.add_argument(
-        "-k",
-        "--kallisto_opt",
-        default="",
-        type=str,
-        required=False,
-        help=(
-            "Additional options for quantification with kallisto. Do not include "
-            "arguments: -i, -o, --single. Provide strandness with --fr-stranded "
-            "or --rf-stranded. For single-end provide estimated fragment length (-l) "
-            "and fragment length standard deviation (-s)."
-        )
+    parsers['run_rnaseq'].add_argument(
+        "-k", "--kallisto_opt", default="", type=str, 
+        help="Additional kallisto options. Do not include -i, -o, --single. Provide strandness with --fr-stranded or --rf-stranded."
     )
-    run_rnaseq_parser.add_argument(
-        "-g",
-        "--gtf",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_rnaseq'].add_argument(
+        "-g", "--gtf", default=None, type=str, 
         help="Path to annotation file in gtf format."
     )
-    run_rnaseq_parser.add_argument(
-        "-e",
-        "--exon_quant",
-        action='store_true',
-        default=None,
-        required=False,
+    parsers['run_rnaseq'].add_argument(
+        "-e", "--exon_quant", action='store_true', default=None, 
         help="Performs exon-level quantification with featureCounts."
     )
-    run_rnaseq_parser.add_argument(
-        "-G",
-        "--genome",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_rnaseq'].add_argument(
+        "-G", "--genome", default=None, type=str, 
         help="Path to FASTA-format file with reference sequences used in read mapping."
     )
-    run_rnaseq_parser.add_argument(
-        "-o",
-        "--outdir",
-        default=".",
-        type=str,
-        required=False,
-        help="Output directory for files (default is current directory)."
-    )
-    run_rnaseq_parser.add_argument(
-        "-j",
-        "--jobs",
-        default=1,
-        type=int,
-        required=False,
-        help="Maximum number of jobs/cores to use in parallel (default=1)."
-    )
-    run_rnaseq_parser.add_argument(
-        "-c",
-        "--configfile",
-        type=str,
-        required=False,
-        help="Sets path to configuration file."
-    )
-    run_rnaseq_parser.add_argument(
-        "-p",
-        "--profile",
-        type=str,
-        required=False,
-        help="Sets path to snakemake profile (useful for cluster execution)."
-    )
-    run_rnaseq_parser.add_argument(
-        "-z",
-        "--dryrun",
-        action='store_true',
-        default=None,
-        required=False,
-        help="Performs a dry run without execution."
-    )
+    add_common_args(parsers['run_rnaseq'])
 
     # run_atacseq subparser
-    run_atacseq_msg = "Executes ATAC-seq module."
-    run_atacseq_parser = subparsers.add_parser(
-        "run_atacseq", 
-        parents=[parent], 
-        description=run_atacseq_msg, 
-        help=run_atacseq_msg, 
+    parsers['run_atacseq'] = subparsers.add_parser(
+        "run_atacseq", parents=[parent],
+        description=MODULES['run_atacseq']['description'],
+        help=MODULES['run_atacseq']['description'],
         add_help=True
     )
-
-    run_atacseq_parser.add_argument(
-        "-i",
-        "--indir",
-        type=str,
-        required=False,
+    parsers['run_atacseq'].add_argument(
+        "-i", "--indir", type=str, 
         help="Input directory containing fastq files."
     )
-    run_atacseq_parser.add_argument(
-        "-f",
-        "--fastp_opt",
-        default="",
-        type=str,
-        required=False,
-        help=(
-            "Additional options for fastq file processing with fastp. Do not include "
-            "arguments: -i, -o, -I, -O, -j, -h."
-        )
+    parsers['run_atacseq'].add_argument(
+        "-f", "--fastp_opt", default="", type=str, 
+        help="Additional fastp options. Do not include -i, -o, -I, -O, -j, -h."
     )
-    run_atacseq_parser.add_argument(
-        "-x",
-        "--hisat2_ref",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_atacseq'].add_argument(
+        "-x", "--hisat2_ref", default=None, type=str, 
         help="Path and basename of HISAT2 index files."
     )
-    run_atacseq_parser.add_argument(
-        "-a",
-        "--hisat2_opt",
-        default="",
-        type=str,
-        required=False,
-        help=(
-            "Additional options for read alignment with HISAT2. Do not include "
-            "arguments: -x, -1, -2, -U, -S, --summary-file."
-        )
+    parsers['run_atacseq'].add_argument(
+        "-a", "--hisat2_opt", default="", type=str, 
+        help="Additional HISAT2 options. Do not include -x, -1, -2, -U, -S, --summary-file."
     )
-    run_atacseq_parser.add_argument(
-        "-e",
-        "--exclusion_list",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_atacseq'].add_argument(
+        "-e", "--exclusion_list", default=None, type=str, 
         help="Path to genome exclusion list in bed format."
     )
-    run_atacseq_parser.add_argument(
-        "-l",
-        "--chr_sizes",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_atacseq'].add_argument(
+        "-l", "--chr_sizes", default=None, type=str, 
         help="Path to tab-delimited file with chromosome sizes."
     )
-    run_atacseq_parser.add_argument(
-        "-t",
-        "--tn5_shift",
-        action='store_true',
-        default=None,
-        required=False,
+    parsers['run_atacseq'].add_argument(
+        "-t", "--tn5_shift", action='store_true', default=None, 
         help="Adjusts read mapping for Tn5 transposase shift."
     )
-    run_atacseq_parser.add_argument(
-        "-m",
-        "--genome_size",
-        default=None,
-        type=int,
-        required=False,
-        help=(
-            "Effective genome size. Reference values available at "
-            "https://deeptools.readthedocs.io/en/latest/content/feature/effectiveGenomeSize.html."
-        )
+    parsers['run_atacseq'].add_argument(
+        "-m", "--genome_size", default=None, type=int, 
+        help="Effective genome size. Reference values at https://deeptools.readthedocs.io/en/latest/content/feature/effectiveGenomeSize.html"
     )
-    run_atacseq_parser.add_argument(
-        "-g",
-        "--gtf",
-        default=None,
-        type=str,
-        required=False,
+    parsers['run_atacseq'].add_argument(
+        "-g", "--gtf", default=None, type=str, 
         help="Path to annotation file in gtf format."
     )
-    run_atacseq_parser.add_argument(
-        "-o",
-        "--outdir",
-        default=".",
-        type=str,
-        required=False,
-        help="Output directory for files (default is current directory)."
-    )
-    run_atacseq_parser.add_argument(
-        "-j",
-        "--jobs",
-        default=1,
-        type=int,
-        required=False,
-        help="Maximum number of jobs/cores to use in parallel (default=1)."
-    )
-    run_atacseq_parser.add_argument(
-        "-c",
-        "--configfile",
-        type=str,
-        required=False,
-        help="Sets path to configuration file."
-    )
-    run_atacseq_parser.add_argument(
-        "-p",
-        "--profile",
-        type=str,
-        required=False,
-        help="Sets path to snakemake profile (useful for cluster execution)."
-    )
-    run_atacseq_parser.add_argument(
-        "-z",
-        "--dryrun",
-        action='store_true',
-        default=None,
-        required=False,
-        help="Performs a dry run without execution."
-    )
+    add_common_args(parsers['run_atacseq'])
+
+    return parsers
 
 
+def process_module_workflow(module: str, args) -> None:
+    """Process a standard module workflow.
+
+    Args:
+        module: Module name
+        args: Parsed command-line arguments
+    """
+    config = load_configfile(args.configfile)
+    config = MODULES[module]['config_set'](config, args)
+    MODULES[module]['config_check'](config)
+    update_configfile(args.configfile, config)
+
+    # Special handling for modules with unique requirements
+    if module == 'getref':
+        handle_getref_workflow(config, args)
+    elif module == 'getfq':
+        handle_getfq_workflow(config, args)
+    else:
+        execute_workflow(module, config, args.configfile, args.dryrun)
+
+
+def main() -> None:
+    """Main entry point for the osync command-line interface."""
+    parser = create_argument_parser()
+    subparser_dict = setup_subparsers(parser)
     args = parser.parse_args()
 
     # Display help for main parser
@@ -794,297 +462,26 @@ def main():
         print(f"osync v{__version__}")
         sys.exit(0)
 
-    # Display subparser specific help messages when only subparser command is specified
-    subparser_cmd_dict = {
-        "makeconfig" : makeconfig_parser,
-        "clearconfig" : clearconfig_parser,
-        "init" : init_parser,
-        "getref" : getref_parser,
-        "getfq" : getfq_parser,
-        "runqc" : runqc_parser,
-        "run_rnaseq" : run_rnaseq_parser,
-        "run_atacseq" : run_atacseq_parser
-    }
-    if len(sys.argv) == 2 and sys.argv[1] in subparser_cmd_dict:
+    # Display subparser specific help when only subparser command is specified
+    if len(sys.argv) == 2 and sys.argv[1] in subparser_dict:
         if args.command != "makeconfig":
-            subparser_cmd_dict[sys.argv[1]].print_help(sys.stderr)
+            subparser_dict[sys.argv[1]].print_help(sys.stderr)
             sys.exit(0)
 
-
+    # Handle commands
     if args.command == "makeconfig":
         make_configfile(args.output)
 
-
-    if args.command == "clearconfig":
+    elif args.command == "clearconfig":
         clear_configfile(args.configfile, args.which)
 
+    elif args.command in MODULES:
+        process_module_workflow(args.command, args)
 
-    if args.command == "init":
-
-        # Check inputs and update configuration
-        config = load_configfile(args.configfile)
-        config = init_config_set(config, args)
-        init_config_check(config)
-        update_configfile(args.configfile, config)
-
-        # Run init workflow
-        profile = config['init']['profile']
-        cmd = (
-            " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
-            " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
-        ).format(
-            profile = f"--profile {profile}" if profile is not None else "",
-            dryrun = f"--dry-run" if args.dryrun else "",
-            jobs = f"--jobs {config['init']['jobs']}",
-            cores = f"--cores {config['init']['jobs']}",
-            snakefile = os.path.dirname(os.path.abspath(__file__))+"/workflow/rules/init.smk",
-            directory = os.path.abspath(config['init']['outdir']),
-            configfile = os.path.abspath(args.configfile)
-        )
-
-        try:
-            subprocess.check_call(cmd, shell=True)
-        except subprocess.CalledProcessError as e:
-            logger.error(e)
-            sys.exit(1)
+    else:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
 
 
-    if args.command == "getref":
-
-        # Check inputs and update configuration
-        config = load_configfile(args.configfile)
-        config = getref_config_set(config, args)
-        getref_config_check(config)
-        update_configfile(args.configfile, config)
-
-        # Initialize directory for download
-        json_path = (
-            "{outdir}/{species}_ensembl_{release}.json"
-        ).format(
-            species = config['getref']['species'],
-            release = config['getref']['release'],
-            outdir = config['getref']['outdir']
-        )
-        if os.path.exists(json_path):
-            logger.warning(f"File exists '{json_path}'! Overwriting...")
-
-        cmd = (
-            " gget ref {species} --which {which} --release {release} "
-            " --out {outdir}/{species}_ensembl_{release}.json "
-        ).format(
-            species = config['getref']['species'],
-            which = config['getref']['which'],
-            release = config['getref']['release'],
-            outdir = config['getref']['outdir']
-        )
-        subprocess.check_call(cmd, shell=True, stderr=subprocess.DEVNULL)
-
-        # Run getref workflow
-        profile = config['getref']['profile']
-        cmd = (
-            " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
-            " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
-        ).format(
-            profile = f"--profile {profile}" if profile is not None else "",
-            dryrun = f"--dry-run" if args.dryrun else "",
-            jobs = f"--jobs {config['getref']['jobs']}",
-            cores = f"--cores {config['getref']['jobs']}",
-            snakefile = os.path.dirname(os.path.abspath(__file__))+"/workflow/rules/getref.smk",
-            directory = os.path.abspath(config['getref']['outdir']),
-            configfile = os.path.abspath(args.configfile)
-        )
-
-        try:
-            subprocess.check_call(cmd, shell=True)
-        except subprocess.CalledProcessError as e:
-            logger.error(e)
-            sys.exit(1)
-
-
-    if args.command == "getfq":
-
-        # Check inputs and update configuration
-        config = load_configfile(args.configfile)
-        config = getfq_config_set(config, args)
-        getfq_config_check(config)
-        update_configfile(args.configfile, config)
-
-        # Initialize directory for download
-        json_path = f"{config['getfq']['outdir']}/download_meta.json"
-        batch_size = config['getfq'].get('batch_size', 1)
-
-        if os.path.exists(json_path):
-            logger.warning(f"File exists '{json_path}'! Using...")
-        else:
-            ids_list = config['getfq']['ids'].split()
-            total_ids = len(ids_list)
-            ftp_flag = '--ftp' if config['getfq'].get('ftp', False) else ''
-
-            logger.warning(f"Fetching metadata for {total_ids} accession(s)")
-
-            if batch_size == 1:
-                # Single ffq call for all IDs
-                cmd = f"ffq {config['getfq']['ids']} {ftp_flag} -o {json_path}"
-                subprocess.check_call(
-                    f"""for i in {{1..5}}; do
-                        echo "Retrieving download links (attempt $i/5)"
-                        {cmd}
-                        sleep 5 && [[ -s {json_path} ]] && exit 0 || sleep 5
-                    done || (echo "ffq failed all retries" && exit 1)""",
-                    shell=True, stderr=subprocess.DEVNULL
-                )
-            else:
-                # Batch processing
-                all_metadata = []
-                num_batches = (total_ids + batch_size - 1) // batch_size
-
-                for i in range(0, total_ids, batch_size):
-                    batch = ids_list[i:i+batch_size]
-                    batch_num = i // batch_size + 1
-                    temp_json = f"{config['getfq']['outdir']}/batch_{batch_num}_temp.json"
-
-                    logger.warning(f"Batch {batch_num}/{num_batches}: {len(batch)} ID(s)")
-                    cmd = f"ffq {' '.join(batch)} {ftp_flag} -o {temp_json}"
-
-                    try:
-                        subprocess.check_call(
-                            f"""for i in {{1..5}}; do
-                                echo "  Retrieving download links (attempt $i/5)"
-                                {cmd}
-                                sleep 5 && [[ -s {temp_json} ]] && exit 0 || sleep 5
-                            done || exit 1""",
-                            shell=True, stderr=subprocess.DEVNULL
-                        )
-
-                        with open(temp_json, 'r') as f:
-                            batch_data = json.load(f)
-                            all_metadata.extend(batch_data if isinstance(batch_data, list) else [batch_data])
-
-                        os.remove(temp_json)
-                    except subprocess.CalledProcessError as e:
-                        logger.error(f"Batch {batch_num} failed: {e}")
-                        if os.path.exists(temp_json): os.remove(temp_json)
-                        for f in __import__('glob').glob(f"{config['getfq']['outdir']}/batch_*_temp.json"):
-                            os.remove(f)
-                        sys.exit(1)
-
-                with open(json_path, 'w') as f:
-                    json.dump(all_metadata, f, indent=2)
-                logger.warning(f"Merged {num_batches} batches: {len(all_metadata)} entries")
-
-        # Run getfq workflow
-        profile = config['getfq']['profile']
-        cmd = (
-            " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock --latency-wait 300 "
-            " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
-        ).format(
-            profile = f"--profile {profile}" if profile is not None else "",
-            dryrun = f"--dry-run" if args.dryrun else "",
-            jobs = f"--jobs {config['getfq']['jobs']}",
-            cores = f"--cores {config['getfq']['jobs']}",
-            snakefile = os.path.dirname(os.path.abspath(__file__))+"/workflow/rules/getfq.smk",
-            directory = os.path.abspath(config['getfq']['outdir']),
-            configfile = os.path.abspath(args.configfile)
-        )
-
-        try:
-            subprocess.check_call(cmd, shell=True)
-        except subprocess.CalledProcessError as e:
-            logger.error(e)
-            sys.exit(1)
-
-
-    if args.command == "runqc":
-
-        # Check inputs and update configuration
-        config = load_configfile(args.configfile)
-        config = runqc_config_set(config, args)
-        runqc_config_check(config)
-        update_configfile(args.configfile, config)
-
-        # Run runqc workflow
-        profile = config['runqc']['profile']
-        cmd = (
-            " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
-            " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
-        ).format(
-            profile = f"--profile {profile}" if profile is not None else "",
-            dryrun = f"--dry-run" if args.dryrun else "",
-            jobs = f"--jobs {config['runqc']['jobs']}",
-            cores = f"--cores {config['runqc']['jobs']}",
-            snakefile = os.path.dirname(os.path.abspath(__file__))+"/workflow/rules/runqc.smk",
-            directory = os.path.abspath(config['runqc']['outdir']),
-            configfile = os.path.abspath(args.configfile)
-        )
-
-        try:
-            subprocess.check_call(cmd, shell=True)
-        except subprocess.CalledProcessError as e:
-            logger.error(e)
-            sys.exit(1)
-
-
-    if args.command == "run_rnaseq":
-
-        # Check inputs and update configuration
-        config = load_configfile(args.configfile)
-        config = run_rnaseq_config_set(config, args)
-        run_rnaseq_config_check(config)
-        update_configfile(args.configfile, config)
-
-        # Run run_rnaseq workflow
-        profile = config['run_rnaseq']['profile']
-        cmd = (
-            " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
-            " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
-        ).format(
-            profile = f"--profile {profile}" if profile is not None else "",
-            dryrun = f"--dry-run" if args.dryrun else "",
-            jobs = f"--jobs {config['run_rnaseq']['jobs']}",
-            cores = f"--cores {config['run_rnaseq']['jobs']}",
-            snakefile = os.path.dirname(os.path.abspath(__file__))+"/workflow/rules/run_rnaseq.smk",
-            directory = os.path.abspath(config['run_rnaseq']['outdir']),
-            configfile = os.path.abspath(args.configfile)
-        )
-
-        try:
-            subprocess.check_call(cmd, shell=True)
-        except subprocess.CalledProcessError as e:
-            logger.error(e)
-            sys.exit(1)
-
-
-    if args.command == "run_atacseq":
-
-        # Check inputs and update configuration
-        config = load_configfile(args.configfile)
-        config = run_atacseq_config_set(config, args)
-        run_atacseq_config_check(config)
-        update_configfile(args.configfile, config)
-
-        # Run run_atacseq workflow
-        profile = config['run_atacseq']['profile']
-        cmd = (
-            " snakemake {profile} {dryrun} {jobs} {cores} --snakefile {snakefile} "
-            " --directory {directory} --configfile {configfile} --nolock --latency-wait 60 "
-            " --rerun-incomplete --rerun-triggers mtime --scheduler greedy "
-        ).format(
-            profile = f"--profile {profile}" if profile is not None else "",
-            dryrun = f"--dry-run" if args.dryrun else "",
-            jobs = f"--jobs {config['run_atacseq']['jobs']}",
-            cores = f"--cores {config['run_atacseq']['jobs']}",
-            snakefile = os.path.dirname(os.path.abspath(__file__))+"/workflow/rules/run_atacseq.smk",
-            directory = os.path.abspath(config['run_atacseq']['outdir']),
-            configfile = os.path.abspath(args.configfile)
-        )
-
-        try:
-            subprocess.check_call(cmd, shell=True)
-        except subprocess.CalledProcessError as e:
-            logger.error(e)
-            sys.exit(1)
+if __name__ == "__main__":
+    main()

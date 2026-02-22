@@ -25,7 +25,7 @@ dependencies:
   - krakentools
   - krona
   - hisat2
-  - kallisto
+  - kallisto <0.50.0
   - sortmerna
   - samtools
   - bedtools

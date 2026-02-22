@@ -44,6 +44,7 @@ getref:
   outdir:
   jobs:
   profile:
+  latency_wait:
 
 
 # -------------------
@@ -56,6 +57,7 @@ getfq:
   outdir:
   jobs:
   profile:
+  latency_wait:
 
 
 # -------------------
@@ -72,6 +74,7 @@ runqc:
   outdir:
   jobs:
   profile:
+  latency_wait:
 
 
 # -------------------
@@ -91,6 +94,7 @@ run_rnaseq:
   outdir:
   jobs:
   profile:
+  latency_wait:
 
 
 # -------------------
@@ -109,3 +113,4 @@ run_atacseq:
   outdir:
   jobs:
   profile:
+  latency_wait:
