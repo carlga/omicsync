@@ -406,7 +406,7 @@ rule generate_inclusion_list:
                 echo '[{MODULE}] Generating inclusion list from exclusion regions...' > {{log}}
 
                 # Add mitochondrial regions to exclusion
-                awk '$1 ~ /(MT|mt|chrMT|chrmt|chrM|chrm)/ {{{{print $1"\\t0\\t"$2}}}}' {{input.chr_sizes}} \
+                awk '$1 ~ /^(MT|mt|chrMT|chrmt|chrM|chrm)$/ {{{{print $1"\\t0\\t"$2}}}}' {{input.chr_sizes}} \
                     > {{params.outdir}}/exclusion_list.tmp \
                     2>> {{log}}
                 
@@ -435,7 +435,7 @@ rule generate_inclusion_list:
                 echo '[{MODULE}] Generating inclusion list (mitochondria only)...' > {{log}}
 
                 # Add mitochondrial regions to exclusion
-                awk '$1 ~ /(MT|mt|chrMT|chrmt|chrM|chrm)/ {{{{print $1"\\t0\\t"$2}}}}' {{input.chr_sizes}} \
+                awk '$1 ~ /^(MT|mt|chrMT|chrmt|chrM|chrm)$/ {{{{print $1"\\t0\\t"$2}}}}' {{input.chr_sizes}} \
                     > {{params.outdir}}/exclusion_list.tmp \
                     2>> {{log}}
 
@@ -673,28 +673,37 @@ rule make_scaled_bedgraph:
             shell=True, 
             text=True
         ).strip()
-        scale_factor = 1e6/(int(reads)/2) if PAIRED else 1e6/int(reads)
+        
+        reads_int = int(reads)
+        
+        # Handle zero reads case
+        if reads_int == 0:
+            shell(f"""
+                echo '[{MODULE}] WARNING: No reads in {{wildcards.name}}_processed.bam, creating empty bedGraph' > {{log}}
+                touch {{output.bdg}}
+            """)
+        else:
+            scale_factor = 1e6/(int(reads_int)/2) if PAIRED else 1e6/int(reads_int)
+            pe = '-pc' if PAIRED else ''
 
-        pe = '-pc' if PAIRED else ''
+            shell(
+                f'''
+                echo '[{MODULE}] Generating RPM-scaled bedGraph for {{wildcards.name}}...' > {{log}}
+                echo '[{MODULE}] Scaling factor: {scale_factor:.4f}' >> {{log}}
 
-        shell(
-            f'''
-            echo '[{MODULE}] Generating RPM-scaled bedGraph for {{wildcards.name}}...' > {{log}}
-            echo '[{MODULE}] Scaling factor: {scale_factor:.4f}' >> {{log}}
+                bedtools genomecov \
+                    {pe} \
+                    -bga \
+                    -trackline \
+                    -trackopts 'name={{wildcards.name}} color=128,128,128' \
+                    -scale {scale_factor} \
+                    -ibam {{input.bam}} \
+                    > {{output.bdg}} \
+                    2>> {{log}}
 
-            bedtools genomecov \
-                {pe} \
-                -bga \
-                -trackline \
-                -trackopts 'name={{wildcards.name}} color=128,128,128' \
-                -scale {scale_factor} \
-                -ibam {{input.bam}} \
-                > {{output.bdg}} \
-                2>> {{log}}
-
-            echo '[{MODULE}] ✓ bedGraph generation complete for {{wildcards.name}}' >> {{log}}
-            '''
-        )
+                echo '[{MODULE}] ✓ bedGraph generation complete for {{wildcards.name}}' >> {{log}}
+                '''
+            )
 
 
 # ================================================================================

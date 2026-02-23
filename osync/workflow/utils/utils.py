@@ -92,6 +92,10 @@ def filter_dict(data: Any, key_value_pair: Tuple[str, Any]) -> List[Dict[str, An
 def check_strandedness(file: str, paired: bool) -> str:
     """Evaluate strandedness from RSeQC infer_experiment output.
     
+    Criteria:
+    - Unstranded: <10% difference between forward and reverse
+    - Stranded: >60% assigned to one strand and >=10% difference
+    
     Args:
         file: Path to RSeQC output file
         paired: Whether data is paired-end
@@ -109,11 +113,17 @@ def check_strandedness(file: str, paired: bool) -> str:
         fwd = re.search(r'"\+\+,--": (\d\.\d+)', text).group(1)
         rev = re.search(r'\+-,-\+": (\d\.\d+)', text).group(1)
     
-    ratio = float(fwd) / float(rev)
+    fwd_val = float(fwd)
+    rev_val = float(rev)
     
-    if ratio > 10:
+    # Unstranded library: difference <10%
+    if abs(fwd_val - rev_val) < 0.1:
+        return 'unstranded'
+    
+    # Stranded library: ≥60% on one strand
+    if fwd_val >= 0.6:
         return 'fwd'
-    elif ratio < 0.1:
+    elif rev_val >= 0.6:
         return 'rev'
     else:
         return 'unstranded'
