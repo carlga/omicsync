@@ -1,4 +1,4 @@
-name: osync 
+name: omicsync 
 channels:
   - conda-forge
   - bioconda

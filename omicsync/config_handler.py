@@ -1,7 +1,7 @@
-"""Configuration file handling for osync.
+"""Configuration file handling for omicsync.
 
 This module provides functions to create, load, update, and clear
-configuration files for the osync tool.
+configuration files for the omicsync tool.
 """
 
 import os

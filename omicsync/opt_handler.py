@@ -1,7 +1,7 @@
-"""Option handling and configuration validation for osync modules.
+"""Option handling and configuration validation for omicsync modules.
 
 This module provides functions to set and validate configuration parameters
-for each osync module (init, getref, getfq, runqc, run_rnaseq, run_atacseq).
+for each omicsync module (init, getref, getfq, runqc, run_rnaseq, run_atacseq).
 """
 
 import os

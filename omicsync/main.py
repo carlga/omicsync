@@ -1,6 +1,6 @@
-"""Command-line interface for osync.
+"""Command-line interface for omicsync.
 
-This module provides the main entry point for the osync toolkit, including
+This module provides the main entry point for the omicsync toolkit, including
 argument parsing, configuration management, and workflow execution for all
 supported modules.
 """
@@ -123,7 +123,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         description=(
-            f"osync v{__version__}: A versatile toolkit for efficient processing "
+            f"omicsync v{__version__}: A versatile toolkit for efficient processing "
             "and integration of omics data."
         ),
         add_help=False
@@ -136,7 +136,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
 
 def setup_subparsers(parser: argparse.ArgumentParser) -> dict:
-    """Set up all subparsers for osync commands.
+    """Set up all subparsers for omicsync commands.
 
     Args:
         parser: Main ArgumentParser instance
@@ -149,7 +149,7 @@ def setup_subparsers(parser: argparse.ArgumentParser) -> dict:
     parsers = {}
 
     # makeconfig subparser
-    msg = "Makes configuration file for osync execution."
+    msg = "Makes configuration file for omicsync execution."
     parsers['makeconfig'] = subparsers.add_parser(
         "makeconfig", parents=[parent], description=msg, help=msg, add_help=True
     )
@@ -447,7 +447,7 @@ def process_module_workflow(module: str, args) -> None:
 
 
 def main() -> None:
-    """Main entry point for the osync command-line interface."""
+    """Main entry point for the omicsync command-line interface."""
     parser = create_argument_parser()
     subparser_dict = setup_subparsers(parser)
     args = parser.parse_args()
@@ -459,7 +459,7 @@ def main() -> None:
 
     # Version return
     if args.version:
-        print(f"osync v{__version__}")
+        print(f"omicsync v{__version__}")
         sys.exit(0)
 
     # Display subparser specific help when only subparser command is specified

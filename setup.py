@@ -1,11 +1,11 @@
 from setuptools import setup
-from osync.__init__ import __version__, __author__, __email__
+from omicsync.__init__ import __version__, __author__, __email__
 
 with open("README.md", "r") as f:
     long_description = f.read()
 
 setup(
-    name="osync",
+    name="omicsync",
     version=__version__,
     license="MIT",
     license_file = "LICENSE",
@@ -14,21 +14,21 @@ setup(
     maintainer=__author__,
     maintainer_email=__email__,
     description=(
-        "osync: an integrated framework for reproducible and efficient processing "
+        "omicsync: an integrated framework for reproducible and efficient processing "
         "of high-throughput sequencing data."
     ),
     long_description=long_description,
     long_description_content_type="text/markdown",
-    packages=["osync", "osync.workflow.rules", "osync.workflow.utils"],
-    package_data={"osync" : ["workflow/*/*"]},
+    packages=["omicsync", "omicsync.workflow.rules", "omicsync.workflow.utils"],
+    package_data={"omicsync" : ["workflow/*/*"]},
     include_package_data=True,
     zip_safe=False,
     python_requires=">=3.6",
     install_requires=[],
-    url="https://github.com/carlga/osync",
-    keywords=["osync", "multi-omics", "data-driven discovery", "data integration"],
+    url="https://github.com/carlga/omicsync",
+    keywords=["omicsync", "multi-omics", "data-driven discovery", "data integration"],
     entry_points={
-        "console_scripts": ["osync=osync.main:main"],
+        "console_scripts": ["omicsync=omicsync.main:main"],
     },
     classifiers=[
         "Environment :: Console",

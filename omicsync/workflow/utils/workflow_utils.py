@@ -1,7 +1,7 @@
 """
 Shared utilities for Snakemake workflows.
 
-This module provides common functions used across all osync Snakemake workflows
+This module provides common functions used across all omicsync Snakemake workflows
 to ensure consistency, reduce code duplication, and improve maintainability.
 """
 

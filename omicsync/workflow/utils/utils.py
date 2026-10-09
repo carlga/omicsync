@@ -1,4 +1,4 @@
-"""Utility functions for osync workflows.
+"""Utility functions for omicsync workflows.
 
 This module provides helper functions for workflow execution, path resolution,
 command building, and argument parsing.
@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Tuple
 import pandas as pd
 import plotly.express as px
 
-from osync.logger import logger
+from omicsync.logger import logger
 
 
 def load_json(file: str) -> Dict[str, Any]:
@@ -184,7 +184,7 @@ def get_workflow_dir() -> Path:
     Returns:
         Path to the workflow/rules directory
     """
-    # Go up 2 levels from utils.py: utils/ -> workflow/ -> osync/
+    # Go up 2 levels from utils.py: utils/ -> workflow/ -> omicsync/
     return Path(__file__).parent.parent / 'rules'
 
 
@@ -201,7 +201,7 @@ def build_snakemake_command(config: Dict[str, Any], module: str,
     Returns:
         Complete Snakemake command string
     """
-    from osync.main import MODULES
+    from omicsync.main import MODULES
     
     module_config = config[module]
     profile = module_config.get('profile')
