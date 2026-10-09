@@ -225,12 +225,13 @@ rule check_ref:
         )
 
         # Parse checksum based on Ensembl release format
-        if params.ensembl_release > 112:
-            # New format: "checksum blocks size date filename"
-            pattern = r'^(\d+)\s+(\d+)\s+.*\s' + re.escape(input.ref) + r'$'
-        else:
-            # Old format: "checksum blocks filename"
-            pattern = r'^(\d+)\s+(\d+)\s+' + re.escape(input.ref) + r'$'
+        pattern = r'^(\d+)\s+(\d+)\s+' + re.escape(input.ref) + r'$'
+        # if params.ensembl_release > 112:
+        #     # New format: "checksum blocks size date filename"
+        #     pattern = r'^(\d+)\s+(\d+)\s+.*\s' + re.escape(input.ref) + r'$'
+        # else:
+        #     # Old format: "checksum blocks filename"
+        #     pattern = r'^(\d+)\s+(\d+)\s+' + re.escape(input.ref) + r'$'
 
         match = re.search(pattern, checksum_origin, re.MULTILINE)
         if match:
