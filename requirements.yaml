@@ -15,7 +15,7 @@ dependencies:
   - seqkit >=2.0.0
   - gget >=0.3.9
   - ffq >=0.3.0
-  - fastqc
+  - fastqc >=0.13.0
   - fastp
   - ucsc-gtftogenepred
   - ucsc-genepredtobed

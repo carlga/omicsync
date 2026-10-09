@@ -239,7 +239,6 @@ rule fastqc_raw:
 
         fastqc \
             --threads {{threads}} \
-            --noextract \
             --outdir {{params.outdir}} \
             {{input.fq_files}} \
             &>> {{log}}
@@ -347,7 +346,6 @@ rule fastqc_preprocessed:
 
         fastqc \
             --threads {{threads}} \
-            --noextract \
             --outdir {{params.outdir}} \
             {{input.fq_files}} \
             &>> {{log}}
