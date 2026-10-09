@@ -1,6 +1,4 @@
-# ![omicsync](docs/images/omicsync_logo_whitebg.png#gh-light-mode-only) ![omicsync](docs/images/omicsync_logo_darkbg.png#gh-dark-mode-only)
-
-[![lang](https://img.shields.io/badge/Language-Python-yellow.svg?style=flat-square)](http://dx.doi.org/10.1093/bioinformatics/btw354)
+# [![Language](https://img.shields.io/badge/Language-Python-yellow.svg?style=flat-square)](http://dx.doi.org/10.1093/bioinformatics/btw354) &emsp; <img src="docs/images/omicsync_logo_whitebg.png#gh-light-mode-only" alt="omicsync" width="240"> <img src="docs/images/omicsync_logo_darkbg.png#gh-dark-mode-only" alt="omicsync" width="240">
 
 ---
 
